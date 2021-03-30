@@ -1,0 +1,54 @@
+{"Modules":[
+	{"Name":"Shared",
+	 "InstallLocation":"C:\\ProgramData\\Airwatch\\Shared",
+	 "Version":"2801",
+	 "Manifest":[
+		{"CopyFiles":
+			{"Destination":"$InstallLocation",
+			"From":".\\Shared\\*"
+			}
+		},
+		{"CreateAccessFile":{
+			"Location":"$InstallLocation",
+			"SecurityLevel":0,
+			"AccessRules": [{
+				"AccessLogic": [
+				{"Group": "Users",
+				 "Rule": "IN"},
+				{"User": "Administrator",
+				 "Rule": "NOTIN"}
+				]
+			 }]
+		   }
+		},
+		{"DeleteFiles":[
+			".\\Shared\\api.config",
+			".\\SharedDeviceModulev2801.zip"
+		]},
+		{"CreateRegKeys":[
+			{ "Keys":[
+				{"LogPath":"C:\\ProgramData\\Airwatch\\Logs"},
+				{"SharedPath":"C:\\ProgramData\\Airwatch\\Shared"},
+				{"TestPath":"C:\\ProgramData\\Airwatch\\Shared"}
+			  ]
+			}
+		]}
+	  ]
+    },
+	{"Name":"AWLogon",
+	 "InstallLocation":"C:\\ProgramData\\Airwatch\\UserManagement",
+	 "Version":"1.0.0",
+	 "Manifest":[
+		{"CopyFiles":
+			{"Destination":"$InstallLocation",
+			"From":".\\UserManagement\\*"}
+		},
+		{"CreateTask":{
+			"Name":"MultiUser_Logon",
+			"PSFile":"$InstallLocation\\AWLogon.ps1",
+			"TriggerType":"onUnlock"
+		}}
+	  ]
+	}
+  ]
+}	
