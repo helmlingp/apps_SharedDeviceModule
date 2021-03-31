@@ -198,156 +198,183 @@ function Create-Task{
     }
 }
 
-Function Invoke-Installation{
-        Param([object]$MyModule,[bool]$TestInstall=$false,[bool]$Install=$true)
-
-        $InstallAccessPolicy = $false;
-        $ModuleName = $MyModule.Name;
+Function Add-OrigEnrolmentUser {
+    #$ModuleRegPath = "HKLM:\Software\AirWatch\ProductProvisioning";
+    $enrolid = (Get-ItemProperty -Path "HKLM:SOFTWARE\Microsoft\Provisioning\OMADM\Accounts\*" -ErrorAction SilentlyContinue).PSChildname
+    foreach ($row in $enrolid) {
+        $enrollmentspath = "HKLM:\SOFTWARE\Microsoft\Enrollments\$row"
+        $upn = (Get-ItemProperty -Path $enrollmentspath -ErrorAction SilentlyContinue).UPN
+        $sid = (Get-ItemProperty -Path $enrollmentspath -ErrorAction SilentlyContinue).SID
+        $EnrollmentState = (Get-ItemProperty -Path $enrollmentspath -ErrorAction SilentlyContinue).EnrollmentState
+        $providerID = (Get-ItemProperty -Path $enrollmentspath -ErrorAction SilentlyContinue).ProviderID
         
-        $ModuleRegPath = "HKLM:\Software\AirWatch\ProductProvisioning";
-        If($MyModule.RegistryLocation){
-            $ModuleRegPath = $MyModule.RegistryLocation  
+        if ($EnrollmentState -eq "1" -and $upn -and $providerID -eq "AirWatchMDM"){
+            New-ItemProperty -Path $ModuleRegPath -Name "Orig_UPN" -Type String -Value $upn -ErrorAction SilentlyContinue -Force;
+            New-ItemProperty -Path $ModuleRegPath -Name "Orig_SID" -Type String -Value $sid -ErrorAction SilentlyContinue -Force;
         }
-        $ModuleInstallPath = $MyModule.InstallLocation;
-
-        $ModuleSecurityLevel = $MyModule.SecureInstall;
-
-        $Currentversion = $MyModule.Version;
-        If(Test-Path $ModuleRegPath){
-            If(Test-ItemProperty -Path $ModuleRegPath -Name $ModuleName){
-                $Previousversion = Get-ItemPropertyValue -Path $ModuleRegPath -Name $ModuleName;
-                If([System.Version]$Previousversion -gt [System.Version]$Currentversion){
-                    continue; 
-                }
-            }
-        } Else {
-            #Create the new module reg path
-            New-Item -Path $ModuleRegPath -Force -WhatIf:$TestInstall;
-        }
-
-        $PathInfoString = ""
-        $PathInfo = @{};
-        $PropertyPaths = $MyModule.PSObject.Properties | where TypeNameOfValue -EQ "System.String";
-        ForEach($PPath in $PropertyPaths){
-            $PathInfo.Add($PPath.Name, $PPath.Value);
-            $PathInfoString += "(" + $PPath.Name + ";" + $PPath.Value + ")";
-        }
-        If($TestInstall){
-            Write-Host $PathInfoString
-        }
-
-        ForEach($ManifestItem in $MyModule.Manifest){
-            $ManifestAction = $ManifestItem.PSObject.Properties.Name 
-            If($ManifestAction -eq "CopyFiles" -or $ManifestAction -eq "MoveFiles"){
-                $CopyDestination = $ManifestItem.CopyFiles.Destination;
-                $CopyDestination = Get-InstallerPath -Path $CopyDestination -Dictionary $PathInfo
-                
-                If(!(Test-Path -Path $CopyDestination)){
-                    New-Item -Path $CopyDestination -ItemType Directory -Force -WhatIf:$TestInstall;
-                }
-                If ($ManifestItem."$ManifestAction".From){
-                    $FromFiles = (Get-ChildItem -Path $ManifestItem."$ManifestAction".From -Force | Select-Object FullName).FullName
-                } ElseIf ($ManifestItem."$ManifestAction".Files) {
-                    $FromFiles = $ManifestItem."$ManifestAction".Files;
-                }
-
-                ForEach($InstallFile In $FromFiles){
-                    If($ManifestAction -Like "CopyFiles"){
-                        Copy-Item -Path $InstallFile $CopyDestination -Force -WhatIf:$TestInstall;
-                    } ElseIf($ManifestAction -Like "MoveFiles"){
-                        Move-Item -Path $InstallFile $CopyDestination -Force -WhatIf:$TestInstall;
-                    }
-                } 
-            } ElseIf ($ManifestAction -eq "DeleteFiles"){
-                ForEach($Delete In $ManifestItem."$ManifestAction"){
-                    $DeleteFormatted = Get-InstallerPath -Path $DeleteFormatted -Dictionary $PathInfo
-                    Remove-Item -Path $Delete -Force -WhatIf:$TestInstall;
-                }
-            } ElseIf ($ManifestAction -eq "CreateAccessFile"){
-                $AccessInstallLocation = $ManifestItem."$ManifestAction".Location,
-                $AccessInstallLocation = Get-InstallerPath -Path $AccessInstallLocation -Dictionary $PathInfo
-
-                $UserList = $ManifestItem."$ManifestAction".UserList;
-                $SecurityLevel = $ManifestItem."$ManifestAction".SecurityLevel;
-
-                $AccessRules = $ManifestItem."$ManifestAction".AccessRules;
-
-                $InstallAccessPolicy = Create-AccessList -ModuleRegPath $ModuleRegPath -InstallPath $MyModule.InstallLocation -AccessRules $AccessRules -SecurityLevel $SecurityLevel -AccessUsers $UserList -TestInstall $TestInstall;
-            } ElseIf ($ManifestAction -eq "CreatePath" -or $ManifestAction -eq "CreatePaths"){
-                 $CreatePath = $ManifestItem."$ManifestAction".Path;
-                 If($ManifestItem."$ManifestAction".Folder){
-                    $CreateFolders = $ManifestItem."$ManifestAction".Folder;
-                 } ElseIf($ManifestItem."$ManifestAction".Folders){
-                    $CreateFolders = $ManifestItem."$ManifestAction".Folders;
-                 }
-                  Create-Paths -Path $CreatePath -Folders $CreateFolders -TestInstall $TestInstall;                               
-            } ElseIf ($ManifestAction -eq "CreateRegKeys"){
-                $RegKeyPath = $ModuleRegPath
-                If($ManifestItem."ManifestAction".Path){
-                    $RegKeyPath = $ManifestItem."ManifestAction".Path
-                    $RegKeyPath = Get-InstallerPath -Path $RegKeyPath -Dictionary $PathInfo
-                }
-                If(!(Test-Path $RegKeyPath)){
-                    New-Item -Path $RegKeyPath -Force -WhatIf:$TestInstall;
-                }
-                ForEach($RegKey In $ManifestItem."$ManifestAction".Keys){
-                    $KeyName = ($RegKey.PSObject.Properties | Select Name).Name;
-                    $KeyValue = $RegKey."$KeyName";
-                    New-ItemProperty -Path $RegKeyPath -Name $KeyName -Value $KeyValue -Force -WhatIf:$TestInstall;
-                }
-            } ElseIf ($ManifestAction -eq "CreateTask"){
-                $TaskName = $ManifestItem."$ManifestAction".Name;
-                $TaskPath = $ManifestItem."$ManifestAction".Path;
-                
-                $PowerShellFile = Get-InstallerPath -Path $ManifestItem."$ManifestAction".PSFile -Dictionary $PathInfo;
-                If($Install){
-                    $TaskInterval = "";
-                    If($ManifestItem."$ManifestAction".TaskInterval){
-                        $TaskInterval = $ManifestItem."$ManifestAction".TaskInterval;
-                    }
-                    $AutoStart = $true;
-                    If($ManifestItem."$ManifestAction".AutoStart){
-                        If($ManifestItem."$ManifestAction".AutoStart -eq 0){
-                            $AutoStart = 0;
-                        }
-                    }
-                    $TriggerType = ""; # always create tasks with -AtLogon trigger, however you can add triggers by updating the Create-Task function. On Windows Unlock ("onUnlock") is now supported.
-                    If($ManifestItem."$ManifestAction".TriggerType){
-                        $TriggerType = $ManifestItem."$ManifestAction".TriggerType;
-                    }
-                    If(!$TaskPath){
-                        $TaskPath = "\AirWatch MDM\";
-                    }
-                    Create-Task -TaskName $TaskName -TaskPath $TaskPath -PShellScript $PowerShellFile -Interval $TaskInterval -Trigger $TriggerType -AutoStart $AutoStart -TestInstall $TestInstall;
-                } Else {
-                    If((Get-ScheduledTask | where {$_.TaskName -EQ $TaskName -and $_.TaskPath -EQ $TaskPath} | measure).Count -gt 0){
-                        Unregister-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -WhatIf:$TestInstall;
-                    }
-                }
-            } ElseIf ($ManifestAction -eq "AccessRule"){
-                $AccessPolicyPath =  Get-ItemPropertyValue -Path $ModuleRegPath -Name "AccessPolicy";
-                $ManifestPaths = @();
-                $ManifestRegKeys = @();
-                If($ManifestItem."$ManifestAction".Paths){
-                    $Paths = $ManifestItem."$ManifestAction".Paths | % {(Get-InstallerPath -Path $_ -Dictionary $PathInfo)}
-                    $ManifestPaths += $ManifestItem."$ManifestAction".Paths;
-                }
-                If($ManifestItem."$ManifestAction".RegKeys){
-                    $ManifestRegKeys += $ManifestItem."$ManifestAction".RegKeys;
-                }
-                Add-AccessPolicyItems -RegPath $ModuleRegPath -AccessPolicyName "System" -Paths $ManifestPaths -RegKeys $ManifestRegKeys;
-            } ElseIf($ManifestAction -eq "HidePaths"){
-                $HidePaths = @();
-                If($ManifestItem."$ManifestAction".Paths){
-                    $HidePaths += $ManifestItem."$ManifestAction".Paths;
-                    Invoke-HidePaths -HidePaths $HidePaths -PathDictionary $PathInfo;
-                }
-            }
-        }
-        New-ItemProperty -Path $ModuleRegPath -Name "$ModuleName`IVersion" -Value $Currentversion -Force -WhatIf:$TestInstall;
-        New-ItemProperty -Path $ModuleRegPath -Name "$ModuleName`IPath" -Value $ModuleInstallPath -Force -WhatIf:$TestInstall;
-        Add-AccessPolicyItems -RegPath $ModuleRegPath -AccessPolicyName "Install" -Paths @($ModuleInstallPath) -RegKeys @($ModuleRegPath) -TestInstall $TestInstall;
     }
+        
+        if($debug){
+            $newUPN = Get-ItemPropertyValue -Path $enrollmentspath -Name "UPN"
+            $newsid = Get-ItemPropertyValue -Path $enrollmentspath -Name "SID"
+            Write-Log2 -Path $logLocation -Message "New Enrollment UPN $newupn & SID $newsid" -Level Info
+        }
+}
+
+Function Invoke-Installation{
+    Param([object]$MyModule,[bool]$TestInstall=$false,[bool]$Install=$true)
+
+    $InstallAccessPolicy = $false;
+    $ModuleName = $MyModule.Name;
+    
+    $ModuleRegPath = "HKLM:\Software\AirWatch\ProductProvisioning";
+    If($MyModule.RegistryLocation){
+        $ModuleRegPath = $MyModule.RegistryLocation  
+    }
+    $ModuleInstallPath = $MyModule.InstallLocation;
+
+    $ModuleSecurityLevel = $MyModule.SecureInstall;
+
+    $Currentversion = $MyModule.Version;
+    If(Test-Path $ModuleRegPath){
+        If(Test-ItemProperty -Path $ModuleRegPath -Name $ModuleName){
+            $Previousversion = Get-ItemPropertyValue -Path $ModuleRegPath -Name $ModuleName;
+            If([System.Version]$Previousversion -gt [System.Version]$Currentversion){
+                continue; 
+            }
+        }
+    } Else {
+        #Create the new module reg path
+        New-Item -Path $ModuleRegPath -Force -WhatIf:$TestInstall;
+    }
+
+    $PathInfoString = ""
+    $PathInfo = @{};
+    $PropertyPaths = $MyModule.PSObject.Properties | where TypeNameOfValue -EQ "System.String";
+    ForEach($PPath in $PropertyPaths){
+        $PathInfo.Add($PPath.Name, $PPath.Value);
+        $PathInfoString += "(" + $PPath.Name + ";" + $PPath.Value + ")";
+    }
+    If($TestInstall){
+        Write-Host $PathInfoString
+    }
+
+    #Record Original enrollment user in registry
+    #to be read by other functions such as delete profile - don't delete original enrollment user
+    Add-OrigEnrolmentUser
+
+    ForEach($ManifestItem in $MyModule.Manifest){
+        $ManifestAction = $ManifestItem.PSObject.Properties.Name 
+        If($ManifestAction -eq "CopyFiles" -or $ManifestAction -eq "MoveFiles"){
+            $CopyDestination = $ManifestItem.CopyFiles.Destination;
+            $CopyDestination = Get-InstallerPath -Path $CopyDestination -Dictionary $PathInfo
+            
+            If(!(Test-Path -Path $CopyDestination)){
+                New-Item -Path $CopyDestination -ItemType Directory -Force -WhatIf:$TestInstall;
+            }
+            If ($ManifestItem."$ManifestAction".From){
+                $FromFiles = (Get-ChildItem -Path $ManifestItem."$ManifestAction".From -Force | Select-Object FullName).FullName
+            } ElseIf ($ManifestItem."$ManifestAction".Files) {
+                $FromFiles = $ManifestItem."$ManifestAction".Files;
+            }
+
+            ForEach($InstallFile In $FromFiles){
+                If($ManifestAction -Like "CopyFiles"){
+                    Copy-Item -Path $InstallFile $CopyDestination -Force -WhatIf:$TestInstall;
+                } ElseIf($ManifestAction -Like "MoveFiles"){
+                    Move-Item -Path $InstallFile $CopyDestination -Force -WhatIf:$TestInstall;
+                }
+            } 
+        } ElseIf ($ManifestAction -eq "DeleteFiles"){
+            ForEach($Delete In $ManifestItem."$ManifestAction"){
+                $DeleteFormatted = Get-InstallerPath -Path $DeleteFormatted -Dictionary $PathInfo
+                Remove-Item -Path $Delete -Force -WhatIf:$TestInstall;
+            }
+        } ElseIf ($ManifestAction -eq "CreateAccessFile"){
+            $AccessInstallLocation = $ManifestItem."$ManifestAction".Location,
+            $AccessInstallLocation = Get-InstallerPath -Path $AccessInstallLocation -Dictionary $PathInfo
+
+            $UserList = $ManifestItem."$ManifestAction".UserList;
+            $SecurityLevel = $ManifestItem."$ManifestAction".SecurityLevel;
+
+            $AccessRules = $ManifestItem."$ManifestAction".AccessRules;
+
+            $InstallAccessPolicy = Create-AccessList -ModuleRegPath $ModuleRegPath -InstallPath $MyModule.InstallLocation -AccessRules $AccessRules -SecurityLevel $SecurityLevel -AccessUsers $UserList -TestInstall $TestInstall;
+        } ElseIf ($ManifestAction -eq "CreatePath" -or $ManifestAction -eq "CreatePaths"){
+                $CreatePath = $ManifestItem."$ManifestAction".Path;
+                If($ManifestItem."$ManifestAction".Folder){
+                $CreateFolders = $ManifestItem."$ManifestAction".Folder;
+                } ElseIf($ManifestItem."$ManifestAction".Folders){
+                $CreateFolders = $ManifestItem."$ManifestAction".Folders;
+                }
+                Create-Paths -Path $CreatePath -Folders $CreateFolders -TestInstall $TestInstall;                               
+        } ElseIf ($ManifestAction -eq "CreateRegKeys"){
+            $RegKeyPath = $ModuleRegPath
+            If($ManifestItem."ManifestAction".Path){
+                $RegKeyPath = $ManifestItem."ManifestAction".Path
+                $RegKeyPath = Get-InstallerPath -Path $RegKeyPath -Dictionary $PathInfo
+            }
+            If(!(Test-Path $RegKeyPath)){
+                New-Item -Path $RegKeyPath -Force -WhatIf:$TestInstall;
+            }
+            ForEach($RegKey In $ManifestItem."$ManifestAction".Keys){
+                $KeyName = ($RegKey.PSObject.Properties | Select Name).Name;
+                $KeyValue = $RegKey."$KeyName";
+                New-ItemProperty -Path $RegKeyPath -Name $KeyName -Value $KeyValue -Force -WhatIf:$TestInstall;
+            }
+        } ElseIf ($ManifestAction -eq "CreateTask"){
+            $TaskName = $ManifestItem."$ManifestAction".Name;
+            $TaskPath = $ManifestItem."$ManifestAction".Path;
+            
+            $PowerShellFile = Get-InstallerPath -Path $ManifestItem."$ManifestAction".PSFile -Dictionary $PathInfo;
+            If($Install){
+                $TaskInterval = "";
+                If($ManifestItem."$ManifestAction".TaskInterval){
+                    $TaskInterval = $ManifestItem."$ManifestAction".TaskInterval;
+                }
+                $AutoStart = $true;
+                If($ManifestItem."$ManifestAction".AutoStart){
+                    If($ManifestItem."$ManifestAction".AutoStart -eq 0){
+                        $AutoStart = 0;
+                    }
+                }
+                $TriggerType = ""; # always create tasks with -AtLogon trigger, however you can add triggers by updating the Create-Task function. On Windows Unlock ("onUnlock") is now supported.
+                If($ManifestItem."$ManifestAction".TriggerType){
+                    $TriggerType = $ManifestItem."$ManifestAction".TriggerType;
+                }
+                If(!$TaskPath){
+                    $TaskPath = "\AirWatch MDM\";
+                }
+                Create-Task -TaskName $TaskName -TaskPath $TaskPath -PShellScript $PowerShellFile -Interval $TaskInterval -Trigger $TriggerType -AutoStart $AutoStart -TestInstall $TestInstall;
+            } Else {
+                If((Get-ScheduledTask | where {$_.TaskName -EQ $TaskName -and $_.TaskPath -EQ $TaskPath} | measure).Count -gt 0){
+                    Unregister-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -WhatIf:$TestInstall;
+                }
+            }
+        } ElseIf ($ManifestAction -eq "AccessRule"){
+            $AccessPolicyPath =  Get-ItemPropertyValue -Path $ModuleRegPath -Name "AccessPolicy";
+            $ManifestPaths = @();
+            $ManifestRegKeys = @();
+            If($ManifestItem."$ManifestAction".Paths){
+                $Paths = $ManifestItem."$ManifestAction".Paths | % {(Get-InstallerPath -Path $_ -Dictionary $PathInfo)}
+                $ManifestPaths += $ManifestItem."$ManifestAction".Paths;
+            }
+            If($ManifestItem."$ManifestAction".RegKeys){
+                $ManifestRegKeys += $ManifestItem."$ManifestAction".RegKeys;
+            }
+            Add-AccessPolicyItems -RegPath $ModuleRegPath -AccessPolicyName "System" -Paths $ManifestPaths -RegKeys $ManifestRegKeys;
+        } ElseIf($ManifestAction -eq "HidePaths"){
+            $HidePaths = @();
+            If($ManifestItem."$ManifestAction".Paths){
+                $HidePaths += $ManifestItem."$ManifestAction".Paths;
+                Invoke-HidePaths -HidePaths $HidePaths -PathDictionary $PathInfo;
+            }
+        }
+    }
+    New-ItemProperty -Path $ModuleRegPath -Name "$ModuleName`IVersion" -Value $Currentversion -Force -WhatIf:$TestInstall;
+    New-ItemProperty -Path $ModuleRegPath -Name "$ModuleName`IPath" -Value $ModuleInstallPath -Force -WhatIf:$TestInstall;
+    Add-AccessPolicyItems -RegPath $ModuleRegPath -AccessPolicyName "Install" -Paths @($ModuleInstallPath) -RegKeys @($ModuleRegPath) -TestInstall $TestInstall;
+}
 
 
 
