@@ -357,6 +357,11 @@ If($INSTALL_FILES){
     ForEach($MyModule in $setup_manifest.Modules){
         Invoke-Installation $MyModule;
     }
+    If((Get-ScheduledTask | where {$_.TaskName -eq "MultiUser_Logon" -and 
+            $_.TaskPath -eq "\AirWatch MDM\"} | measure).Count -gt 0){
+        Start-ScheduledTask -TaskName "MultiUser_Logon" -TaskPath "\AirWatch MDM\";
+    }
+
     If((Get-ScheduledTask | where {$_.TaskName -eq "Apply_AccessPolicies" -and 
             $_.TaskPath -eq "\AirWatch MDM\"} | measure).Count -gt 0){
         Start-ScheduledTask -TaskName "Apply_AccessPolicies" -TaskPath "\AirWatch MDM\";
