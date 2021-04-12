@@ -208,7 +208,7 @@ Function Add-OrigEnrolmentUser {
         $EnrollmentState = (Get-ItemProperty -Path $enrollmentspath -ErrorAction SilentlyContinue).EnrollmentState
         $providerID = (Get-ItemProperty -Path $enrollmentspath -ErrorAction SilentlyContinue).ProviderID
         
-        if ($EnrollmentState -eq "1" -and $upn -and $providerID -eq "AirWatchMDM"){
+        if (($EnrollmentState -eq "1") -and ($providerID -eq "AirWatchMDM")){
             New-ItemProperty -Path $ModuleRegPath -Name "Orig_UPN" -Type String -Value $upn -ErrorAction SilentlyContinue -Force;
             New-ItemProperty -Path $ModuleRegPath -Name "Orig_SID" -Type String -Value $sid -ErrorAction SilentlyContinue -Force;
         }
